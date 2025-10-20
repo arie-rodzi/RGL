@@ -12,17 +12,60 @@ st.set_page_config(page_title="RiverGuard — z, e^z, k Calculator", layout="wid
 st.title("RiverGuard — z, e^z, k Calculator")
 
 st.markdown("""
-This app **only computes** the three logistic quantities for each row in your dataset:
+### ✅ Welcome to RiverGuard
 
-- **𝑧 = β₀ + Σ βᵢ xᵢ**
-- **e^𝑧**
-- **k = e^𝑧 / (1 + e^𝑧)** (probability; we use **k** to avoid confusion with the *p* inside the logit)
+This app helps you **calculate water pollution indicators** using your existing data.  
+Just upload your file — the app will do the rest.
 
-**Required input columns (case-sensitive):** `DOmgl, BODmgl, CODmgl, SSmgl, pH, NH3Nmgl`  
-If your file also has **`RIVERSTATUS`** (0/1 from WQI), the app will compute **Persistency (%)** (match rate of class(k) vs WQI) and a confusion table.
+---
 
-**No model is trained.** It simply applies your coefficients.
+### 🔹 What You’ll Get from the App
+For every row in your dataset, the app will automatically:
+- Calculate a **logistic score (z)**
+- Convert it to **eⁿ (exponential value)**
+- Compute a **probability value (k = e^z / (1 + e^z))**
+
+If your data also includes **RIVERSTATUS** (0 = Clean, 1 = Polluted), the app will:
+- Compare its prediction with your WQI label
+- Show **Persistency (%)**
+- Display a **confusion table** (accuracy breakdown)
+
+---
+
+### 📂 What You Need to Upload
+Your file must contain these columns exactly:
+`DOmgl, BODmgl, CODmgl, SSmgl, pH, NH3Nmgl`
+
+Optional column (if available):
+`RIVERSTATUS`
+
+You can upload **Excel or CSV** files.
+
+---
+
+### ⚙️ Customize Your Coefficients
+On the left side, you can:
+- Edit the logistic regression coefficients (β values)
+- Adjust the prediction threshold
+
+**Note:** Any value of `k ≥ 0.90` is automatically classified as *Polluted*.
+
+---
+
+### 📥 What You Can Download
+After processing, you’ll get:
+- An **Excel file** with your original data plus new columns (z, e^z, k)
+- A **Summary sheet** (threshold, persistency, confusion table)
+- Or a **CSV version** if preferred
+
+---
+
+### ✅ No Training Needed
+This app does **not** build or fit any model — it only calculates results based on the coefficients you provide.
+
+You're ready to start! Upload your data above.
 """)
+
 
 FEATURES = ["DOmgl", "BODmgl", "CODmgl", "SSmgl", "pH", "NH3Nmgl"]
 TARGET = "RIVERSTATUS"  # optional (WQI-derived 0/1 label)
