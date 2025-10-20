@@ -8,8 +8,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="RiverGuard — z, e^z, k Calculator", layout="wide")
-st.title("RiverGuard — z, e^z, k Calculator")
+st.set_page_config(page_title="RGL — RiverGuard Logistic", layout="wide")
+st.title("RGL — RiverGuard Logistic")
+
 
 st.markdown("""
 ### ✅ Welcome to RiverGuard
