@@ -48,7 +48,7 @@ On the left side, you can:
 - Edit the logistic regression coefficients (β values)
 - Adjust the prediction threshold
 
-**Note:** Any value of **k ≥ threshold** is treated as **Polluted** (so predicted **RIVERSTATUS = 0**).
+**Rule:** **if k ≥ threshold ⇒ Polluted ⇒ Predicted RIVERSTATUS = 0**, else **Clean ⇒ 1**.
 
 ---
 
@@ -62,8 +62,6 @@ After processing, you’ll get:
 
 ### ✅ No Training Needed
 This app does **not** build or fit any model — it only calculates results based on the coefficients you provide.
-
-You're ready to start! Upload your data above.
 """)
 
 FEATURES = ["DOmgl", "BODmgl", "CODmgl", "SSmgl", "pH", "NH3Nmgl"]
@@ -87,9 +85,12 @@ with st.sidebar:
 BETAS = {"DOmgl": b_DO, "BODmgl": b_BOD, "CODmgl": b_COD, "SSmgl": b_SS, "pH": b_pH, "NH3Nmgl": b_NH3}
 
 def compute_outputs(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute z, e^z, k, and predictions under coding: RIVERSTATUS 1=Clean, 0=Polluted."""
-    X = df[[c for c in FEATURES if c in df.columns]].astype(float).copy()
-    beta_vec = np.array([BETAS.get(c, 0.0) for c in X.columns], dtype=float)
+    """Compute z, e^z, k, and predicted RIVERSTATUS (1=Clean,0=Polluted)."""
+    # Select available feature columns in the given order
+    cols = [c for c in FEATURES if c in df.columns]
+    X = df[cols].astype(float).copy()
+    beta_vec = np.array([BETAS.get(c, 0.0) for c in cols], dtype=float)
+
     z = beta0 + X.values @ beta_vec
     ez = np.exp(z)
     k = ez / (1.0 + ez)  # interpret as P(Polluted)
@@ -99,11 +100,11 @@ def compute_outputs(df: pd.DataFrame) -> pd.DataFrame:
     out["e^z"] = ez
     out["k"] = k
 
-    # First predict Polluted vs Clean from k and threshold
-    out["PredPolluted"] = (out["k"] >= thresh).astype(int)  # 1 = Polluted, 0 = Clean (internal)
-    # Map to RIVERSTATUS coding: 1=Clean, 0=Polluted
-    out["PredictedRIVERSTATUS"] = np.where(out["PredPolluted"] == 1, 0, 1).astype(int)
+    # Predict: Polluted if k ≥ threshold; map to RIVERSTATUS coding (1=Clean, 0=Polluted)
+    predicted_riverstatus = np.where(out["k"] >= thresh, 0, 1).astype(int)
+    out["PredictedRIVERSTATUS"] = predicted_riverstatus
     out["PredictedLabel"] = np.where(out["PredictedRIVERSTATUS"] == 1, "Clean", "Polluted")
+
     return out
 
 def pretty_display(df: pd.DataFrame) -> pd.DataFrame:
@@ -135,9 +136,13 @@ if file:
         # Compute results
         res = compute_outputs(df)
 
-        # Preview
+        # Preview (show only relevant columns)
         st.markdown("#### Preview (first 10 rows)")
-        st.dataframe(pretty_display(res.head(10)), use_container_width=True, height=360)
+        show_cols = [c for c in [TARGET, "𝑧 = ln(p/(1−p))", "e^𝑧", "k = e^𝑧/(1+e^𝑧)",
+                                 "Predicted RIVERSTATUS (1=Clean,0=Polluted)", "PredictedLabel"]
+                     if c in pretty_display(res).columns]
+        st.dataframe(pretty_display(res.head(10))[show_cols],
+                     use_container_width=True, height=360)
 
         # Persistency vs WQI (if available)
         persist = None
@@ -162,7 +167,7 @@ if file:
             except Exception:
                 st.warning("Could not compute Persistency. Ensure RIVERSTATUS is coded 1=Clean, 0=Polluted.")
 
-        # Build Excel with Results + Summary
+        # Build Excel with Results + Summary (no PredPolluted in any sheet)
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             res.to_excel(writer, index=False, sheet_name="Results")
@@ -187,7 +192,7 @@ if file:
             use_container_width=True
         )
 
-        # Optional CSV download
+        # Optional CSV download (results only)
         csv_bytes = res.to_csv(index=False).encode("utf-8")
         st.download_button(
             "⬇️ Download CSV (Results only)",
@@ -198,5 +203,7 @@ if file:
         )
 
 st.markdown("---")
-st.caption("This tool does not train any model. It applies your coefficients to compute z, e^z, and k per row. "
-           "If RIVERSTATUS is present (1=Clean, 0=Polluted), it reports Persistency (%) and a confusion table.")
+st.caption(
+    "This tool does not train any model. It applies your coefficients to compute z, e^z, and k per row. "
+    "If RIVERSTATUS is present (1=Clean, 0=Polluted), it reports Persistency (%) and a confusion table."
+)
