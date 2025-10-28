@@ -15,14 +15,13 @@ st.markdown("""
 Upload your file and the app will compute:
 - **z** (logit score),
 - **e^z**,
-- **k = e^z/(1+e^z)** interpreted as the **model's predicted probability** (P of one class).
+- **k = e^z/(1+e^z)** (the model's probability).
 
 If **RIVERSTATUS** exists (**1 = Clean, 0 = Polluted**), the app:
-- **Auto-calibrates** whether *k* behaves like **P(Polluted)** or **P(Clean)**, and
-- finds a good **threshold** by sweeping 0.05→0.95 to maximize accuracy,
-- then reports **Persistency (%)** and a **confusion table**.
-
-No extra prediction column is added — **k is the only prediction value**.
+- **Auto-calibrates** whether *k* behaves like **P(Polluted)** or **P(Clean)**,
+- finds a good **threshold** (0.05→0.95) to maximize accuracy,
+- reports **Persistency (%)**, a **confusion table**, and
+- adds a column **`k_vs_RIVERSTATUS`** = “Match” / “Not match”.
 """)
 
 FEATURES = ["DOmgl", "BODmgl", "CODmgl", "SSmgl", "pH", "NH3Nmgl"]
@@ -69,7 +68,8 @@ def pretty_display(df: pd.DataFrame) -> pd.DataFrame:
     return df.rename(columns={
         "z": "𝑧 = ln(p/(1−p))",
         "e^z": "e^𝑧",
-        "k": "k = e^𝑧/(1+e^𝑧)"
+        "k": "k = e^𝑧/(1+e^𝑧)",
+        "k_vs_RIVERSTATUS": "k vs RIVERSTATUS (Match?)"
     })
 
 def classify_from_k(k_vals: np.ndarray, meaning: str, thr: float) -> np.ndarray:
@@ -116,15 +116,7 @@ if file:
         # Compute z, e^z, k
         res = compute_outputs(df)
 
-        # Preview — show (optional) RIVERSTATUS + z, e^z, k only
-        st.markdown("#### Preview (first 10 rows)")
-        pretty = pretty_display(res.head(10))
-        ordered_cols = ([TARGET] if TARGET in pretty.columns else []) + [
-            "𝑧 = ln(p/(1−p))", "e^𝑧", "k = e^𝑧/(1+e^𝑧)"
-        ]
-        st.dataframe(pretty[ordered_cols], use_container_width=True, height=360)
-
-        # Persistency / Confusion if labels exist
+        # Persistency / Confusion if labels exist; also build "Match" column
         persist = None
         cm_df = None
         chosen_meaning = None
@@ -148,6 +140,9 @@ if file:
                 pred = classify_from_k(k_vals, chosen_meaning, chosen_thr)
                 persist = float((pred == true_vals).mean() * 100.0)
 
+                # Add the requested Match / Not match column
+                res["k_vs_RIVERSTATUS"] = np.where(pred == true_vals, "Match", "Not match")
+
                 cm_df = pd.crosstab(
                     pd.Series(true_vals, name="True RIVERSTATUS (1=Clean,0=Polluted)"),
                     pd.Series(pred, name="Pred RIVERSTATUS (1=Clean,0=Polluted)"),
@@ -162,7 +157,17 @@ if file:
             except Exception:
                 st.warning("Could not compute Persistency. Ensure RIVERSTATUS is coded 1=Clean, 0=Polluted.")
 
-        # Build Excel with Results + Summary (Results: only original + z, e^z, k)
+        # Preview — show (optional) RIVERSTATUS + z, e^z, k + Match column (if present)
+        st.markdown("#### Preview (first 10 rows)")
+        pretty = pretty_display(res.head(10))
+        ordered_cols = ([TARGET] if TARGET in pretty.columns else []) + [
+            "𝑧 = ln(p/(1−p))", "e^𝑧", "k = e^𝑧/(1+e^𝑧)"
+        ]
+        if "k vs RIVERSTATUS (Match?)" in pretty.columns:
+            ordered_cols.append("k vs RIVERSTATUS (Match?)")
+        st.dataframe(pretty[ordered_cols], use_container_width=True, height=380)
+
+        # Build Excel with Results + Summary
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             res.to_excel(writer, index=False, sheet_name="Results")
@@ -203,5 +208,6 @@ if file:
 st.markdown("---")
 st.caption(
     "No model is trained. The app applies your β to compute z, e^z, and k per row. "
-    "If RIVERSTATUS (1=Clean, 0=Polluted) is present, it auto-calibrates k's meaning and the threshold to maximize accuracy."
+    "If RIVERSTATUS (1=Clean, 0=Polluted) is present, it auto-calibrates k's meaning and the threshold to maximize accuracy, "
+    "and marks each row as 'Match' or 'Not match'."
 )
