@@ -1,6 +1,6 @@
 # app.py
 # RiverGuard — z, e^z, k Calculator (no training)
-# Input: CSV/XLSX with DOmgl, BODmgl, CODmgl, SSmgl, pH, NH3Nmgl (RIVERSTATUS optional)
+# Input: CSV/XLSX with DOmgl, BODmgl, CODmgl, SSmgl, pH, NH3Nmgl (RIVERSTATUS optional: 1=Clean, 0=Polluted)
 # Output: Original data + z, e^z, k (+ Persistency vs WQI if RIVERSTATUS present), downloadable as Excel/CSV
 
 import io
@@ -10,7 +10,6 @@ import streamlit as st
 
 st.set_page_config(page_title="RGL — RiverGuard Logistic", layout="wide")
 st.title("RGL — RiverGuard Logistic")
-
 
 st.markdown("""
 ### ✅ Welcome to RiverGuard
@@ -24,10 +23,10 @@ Just upload your file — the app will do the rest.
 For every row in your dataset, the app will automatically:
 - Calculate a **logistic score (z)**
 - Convert it to **eⁿ (exponential value)**
-- Compute a **probability value (k = e^z / (1 + e^z))**
+- Compute a **probability value**: **k = e^z / (1 + e^z)** (interpreted as **P(Polluted)**)
 
-If your data also includes **RIVERSTATUS** (0 = Clean, 1 = Polluted), the app will:
-- Compare its prediction with your WQI label
+If your data also includes **RIVERSTATUS** (**1 = Clean, 0 = Polluted**), the app will:
+- Compare predicted status with your WQI-derived label
 - Show **Persistency (%)**
 - Display a **confusion table** (accuracy breakdown)
 
@@ -38,7 +37,7 @@ Your file must contain these columns exactly:
 `DOmgl, BODmgl, CODmgl, SSmgl, pH, NH3Nmgl`
 
 Optional column (if available):
-`RIVERSTATUS`
+`RIVERSTATUS`  *(1 = Clean, 0 = Polluted)*
 
 You can upload **Excel or CSV** files.
 
@@ -49,13 +48,13 @@ On the left side, you can:
 - Edit the logistic regression coefficients (β values)
 - Adjust the prediction threshold
 
-**Note:** Any value of `k ≥ 0.90` is automatically classified as *Polluted*.
+**Note:** Any value of **k ≥ threshold** is treated as **Polluted** (so predicted **RIVERSTATUS = 0**).
 
 ---
 
 ### 📥 What You Can Download
 After processing, you’ll get:
-- An **Excel file** with your original data plus new columns (z, e^z, k)
+- An **Excel file** with your original data plus new columns (z, e^z, k, predictions)
 - A **Summary sheet** (threshold, persistency, confusion table)
 - Or a **CSV version** if preferred
 
@@ -67,9 +66,8 @@ This app does **not** build or fit any model — it only calculates results base
 You're ready to start! Upload your data above.
 """)
 
-
 FEATURES = ["DOmgl", "BODmgl", "CODmgl", "SSmgl", "pH", "NH3Nmgl"]
-TARGET = "RIVERSTATUS"  # optional (WQI-derived 0/1 label)
+TARGET = "RIVERSTATUS"  # optional (WQI-derived label: 1=Clean, 0=Polluted)
 
 # ----- Coefficients & threshold -----
 with st.sidebar:
@@ -80,27 +78,32 @@ with st.sidebar:
     b_BOD = st.number_input("β_BODmgl", value=-1.781, format="%.6f")
     b_COD = st.number_input("β_CODmgl", value=-0.271, format="%.6f")
     b_SS  = st.number_input("β_SSmgl", value=-0.035, format="%.6f")
-    b_pH  = st.number_input("β_pH", value=0.000, format="%.6f")  # not used in your equation by default
+    b_pH  = st.number_input("β_pH", value=0.000, format="%.6f")  # optional in equation
     b_NH3 = st.number_input("β_NH3Nmgl", value=5.853, format="%.6f")
 
-    thresh = st.slider("Threshold for class(k) = Polluted (optional)", 0.05, 0.95, 0.50, 0.01)
-    st.caption("Used only to compute PredictedStatus and Persistency vs WQI (if RIVERSTATUS exists).")
+    thresh = st.slider("Threshold for k = P(Polluted)", 0.05, 0.95, 0.50, 0.01)
+    st.caption("If k ≥ threshold ⇒ Predicted Polluted (so Predicted RIVERSTATUS = 0).")
 
 BETAS = {"DOmgl": b_DO, "BODmgl": b_BOD, "CODmgl": b_COD, "SSmgl": b_SS, "pH": b_pH, "NH3Nmgl": b_NH3}
 
 def compute_outputs(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute z, e^z, k (and predicted class/label if threshold given)."""
+    """Compute z, e^z, k, and predictions under coding: RIVERSTATUS 1=Clean, 0=Polluted."""
     X = df[[c for c in FEATURES if c in df.columns]].astype(float).copy()
     beta_vec = np.array([BETAS.get(c, 0.0) for c in X.columns], dtype=float)
     z = beta0 + X.values @ beta_vec
     ez = np.exp(z)
-    k = ez / (1.0 + ez)
+    k = ez / (1.0 + ez)  # interpret as P(Polluted)
+
     out = df.copy()
     out["z"] = z
     out["e^z"] = ez
     out["k"] = k
-    out["PredictedStatus"] = (out["k"] >= thresh).astype(int)
-    out["PredictedLabel"] = np.where(out["PredictedStatus"] == 1, "Polluted", "Clean")
+
+    # First predict Polluted vs Clean from k and threshold
+    out["PredPolluted"] = (out["k"] >= thresh).astype(int)  # 1 = Polluted, 0 = Clean (internal)
+    # Map to RIVERSTATUS coding: 1=Clean, 0=Polluted
+    out["PredictedRIVERSTATUS"] = np.where(out["PredPolluted"] == 1, 0, 1).astype(int)
+    out["PredictedLabel"] = np.where(out["PredictedRIVERSTATUS"] == 1, "Clean", "Polluted")
     return out
 
 def pretty_display(df: pd.DataFrame) -> pd.DataFrame:
@@ -108,7 +111,8 @@ def pretty_display(df: pd.DataFrame) -> pd.DataFrame:
     return df.rename(columns={
         "z": "𝑧 = ln(p/(1−p))",
         "e^z": "e^𝑧",
-        "k": "k = e^𝑧/(1+e^𝑧)"
+        "k": "k = e^𝑧/(1+e^𝑧)",
+        "PredictedRIVERSTATUS": "Predicted RIVERSTATUS (1=Clean,0=Polluted)"
     })
 
 st.markdown("### Upload your data")
@@ -140,34 +144,38 @@ if file:
         cm_df = None
         if TARGET in res.columns:
             try:
-                true_vals = res[TARGET].astype(int).values
-                pred_vals = res["PredictedStatus"].astype(int).values
+                true_vals = res[TARGET].astype(int).values  # 1=Clean, 0=Polluted
+                pred_vals = res["PredictedRIVERSTATUS"].astype(int).values  # 1=Clean, 0=Polluted
                 persist = float((true_vals == pred_vals).mean() * 100.0)
+
                 cm_df = pd.crosstab(
                     res[TARGET].astype(int),
-                    res["PredictedStatus"].astype(int),
-                    rownames=["True (WQI)"],
-                    colnames=["Pred (k ≥ thr)"],
+                    res["PredictedRIVERSTATUS"].astype(int),
+                    rownames=["True RIVERSTATUS (1=Clean,0=Polluted)"],
+                    colnames=["Pred RIVERSTATUS (1=Clean,0=Polluted)"],
                     dropna=False
                 ).astype(int)
+
                 st.metric("Persistency (%)", f"{persist:.1f}%")
                 st.markdown("##### Confusion (WQI vs Predicted)")
                 st.dataframe(cm_df, use_container_width=True)
             except Exception:
-                st.warning("Could not compute Persistency. Ensure RIVERSTATUS is 0/1.")
+                st.warning("Could not compute Persistency. Ensure RIVERSTATUS is coded 1=Clean, 0=Polluted.")
 
         # Build Excel with Results + Summary
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             res.to_excel(writer, index=False, sheet_name="Results")
             # Summary sheet
-            summary_rows = [("Threshold", thresh)]
+            summary_rows = [
+                ("Threshold (k≥thr ⇒ Polluted ⇒ Pred RIVERSTATUS=0)", thresh),
+                ("k interpretation", "P(Polluted)")
+            ]
             if persist is not None:
                 summary_rows.append(("Persistency (%)", round(persist, 1)))
             summary_df = pd.DataFrame(summary_rows, columns=["Item", "Value"])
             summary_df.to_excel(writer, index=False, sheet_name="Summary")
             if cm_df is not None:
-                # append confusion matrix below summary
                 start_row = len(summary_rows) + 3
                 cm_df.to_excel(writer, sheet_name="Summary", startrow=start_row)
 
@@ -191,4 +199,4 @@ if file:
 
 st.markdown("---")
 st.caption("This tool does not train any model. It applies your coefficients to compute z, e^z, and k per row. "
-           "If RIVERSTATUS (WQI-based) is present, it reports Persistency (%) and a confusion table.")
+           "If RIVERSTATUS is present (1=Clean, 0=Polluted), it reports Persistency (%) and a confusion table.")
